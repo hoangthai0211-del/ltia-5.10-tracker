@@ -17,13 +17,22 @@ SCRIPTS_DIR = os.path.join(WORKSPACE_ROOT, "Approval Drawing", "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from boq_and_drawing_data import (
-    SHIPMENT_INDEX_DATA,
-    BOQ_MASTER_DATA,
-    DRAWING_EQUIPMENT_DATA,
-    ISSUES_LOG_DATA,
-)
-from pl_detail_builder import build_all_pl_details
+try:
+    from boq_and_drawing_data import (
+        SHIPMENT_INDEX_DATA,
+        BOQ_MASTER_DATA,
+        DRAWING_EQUIPMENT_DATA,
+        ISSUES_LOG_DATA,
+    )
+    from pl_detail_builder import build_all_pl_details
+except ImportError:
+    SHIPMENT_INDEX_DATA = []
+    BOQ_MASTER_DATA = []
+    DRAWING_EQUIPMENT_DATA = []
+    ISSUES_LOG_DATA = []
+
+    def build_all_pl_details(*args, **kwargs):
+        return {}
 
 STEPS_DEFINITION = [
     {
