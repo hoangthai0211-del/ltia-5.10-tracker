@@ -474,7 +474,6 @@ def generate_excel_report_bytes():
         ("SSE", "RAP-METOR6E"): 38,
         ("SSE", "RAP-ITEMISER5X"): 20,
         ("SSE", "FOX-EAS-AMD06HP"): 16,
-        ("SSE", "CEIA-SAMD"): 5,
         ("SSE", "SSE-CMS-LOT"): 3,
     }
     groups = {}

@@ -1101,14 +1101,8 @@ def init_db(db_path):
         "1P 230V 10A", 2, "2026-09-17", "2026-09-23", "thai"
     )
 
-    # 11. CEIA SAMD Shoe Scanner (5 units in BOQ 42100-I.B.1.4 & B.2.4; marked FUTURE PROVISION ONLY on Drawing 0466)
-    add_machines(
-        "SSE-SAMD-3F-DEP", 5, "SSE", "CEIA-SAMD", "CEIA SAMD (ShoeScan)", "Máy quét giày tự động CEIA SAMD (An ninh khởi hành 3F)",
-        "CEIA", "Italy", "3F", "3F-Zone 2 & 7 (Departure)", "3F - Departure Security Check Points (4 Int'l + 1 Dom theo BOQ)",
-        "All", "Both", "SSE-SAMD-FUTURE", "0466 Tr.28-30 & Tr.33-48",
-        "42100-I.B.1.4 / B.2.4", "FUTURE_PROVISION", "BOQ có 5 bộ (4 Int'l + 1 Dom), nhưng trên Bản vẽ duyệt 0466 ghi chú 'SHOE SCANNER - FUTURE (PROVISION ONLY)' (ISS-11 & ISS-12)",
-        "1P 230V 10A", 1, "2026-10-01", "2026-10-15", "thai"
-    )
+    # 11. CEIA SAMD Shoe Scanner - ĐÃ BỎ TRONG GIAI ĐOẠN NÀY
+    # (Từng có 5 bộ trong BOQ 42100-I.B.1.4 & B.2.4; Bản vẽ 0466 ghi chú FUTURE PROVISION ONLY - Nay đã chính thức bỏ)
 
     # 12. SSE Control and Monitoring System (3 subsystems)
     add_machines(
@@ -1200,7 +1194,7 @@ def init_db(db_path):
         iss_code, stage, desc, src, act, st_raw = iss
 
         if iss_code == "ISS-12":
-            desc = desc + " -> [CẬP NHẬT MỚI]: Đã nhập khẩu và thông quan đầy đủ 24 bộ Itemiser 5X tại Lô 15 (04 bộ HBS) và Lô 16 (20 bộ SSE). Hiện chỉ còn 16 cổng RFID Foxcon và 5 máy quét giày SAMD (Future Provision) đang theo dõi."
+            desc = desc + " -> [CẬP NHẬT MỚI]: Đã nhập khẩu và thông quan đầy đủ 24 bộ Itemiser 5X tại Lô 15 (04 bộ HBS) và Lô 16 (20 bộ SSE). Hiện chỉ còn 16 cổng RFID Foxcon đang theo dõi (Hạng mục 05 máy quét giày CEIA SAMD đã chính thức bỏ trong giai đoạn này)."
             act = "Đã thông quan & bàn giao hiện trường 24 bộ Itemiser 5X (Lô 15 & 16). Tiếp tục theo dõi tiến độ các cổng RFID và nội thất."
             st_raw = "Đã xử lý (Lô 15 & 16)"
 

@@ -51,7 +51,6 @@ const BOQ_MAP = {
   "SSE|RAP-METOR6E": { qty: 38, note: "Khớp 100% BOQ, Bản vẽ & Lô 3 (38 cổng từ Metor 6E)" },
   "SSE|RAP-ITEMISER5X": { qty: 20, note: "Đã về đủ 20 bộ tại Lô 16 (S/N: 25-15732..15740)" },
   "SSE|FOX-EAS-AMD06HP": { qty: 16, note: "Khớp 16 cổng RFID tại 1F Arrival Customs - Chờ hàng về" },
-  "SSE|CEIA-SAMD": { qty: 5, note: "BOQ 5 bộ; Bản vẽ 0466 ghi 'FUTURE PROVISION ONLY' (Cần làm rõ)" },
   "SSE|SSE-CMS-LOT": { qty: 3, note: "Hệ thống Server quản lý tập trung SSE tại 2F Data Center" },
 };
 
@@ -653,7 +652,7 @@ function renderFloorMap() {
 }
 
 // ==========================================================================
-// TAB 3: 239 MACHINES 9-STEP MATRIX TABLE
+// TAB 3: 234 MACHINES 9-STEP MATRIX TABLE
 // ==========================================================================
 function populateDynamicFilterDropdowns() {
   const modelSel = document.getElementById("fltModel");
@@ -1606,6 +1605,29 @@ function handleExcelImportFile(event) {
 // MOBILE QR & PUBLIC 4G TUNNEL
 // ==========================================================================
 async function openMobileTunnelModal() {
+  const isCloud = !["localhost", "127.0.0.1"].includes(window.location.hostname) && !window.location.hostname.startsWith("192.168.");
+  const curOrigin = window.location.origin;
+
+  if (isCloud) {
+    document.getElementById("txtLanUrl").value = curOrigin;
+    document.getElementById("txtReadonlyUrl").value = `${curOrigin}/?view=readonly`;
+    
+    const sec1Title = document.querySelector(".tunnel-section h4");
+    if (sec1Title) sec1Title.textContent = "1. Link truy cập trực tiếp 24/7 (Mọi mạng 4G/5G & WiFi)";
+
+    const sec2 = document.querySelector(".tunnel-section.mt-16");
+    if (sec2) {
+      sec2.innerHTML = `
+        <div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;padding:12px;border-radius:6px;">
+          <h4 style="margin:0 0 6px 0;color:#065f46;font-size:13px;">🌐 Hệ thống đang chạy Trực tuyến 24/7 trên Cloud</h4>
+          <p class="text-xs" style="margin:0;line-height:1.5;">Web App đã được đưa lên máy chủ Internet toàn cầu. Mọi thiết bị điện thoại ở hiện trường (dùng 4G/5G hoặc bất kỳ mạng Wi-Fi nào) đều truy cập trực tiếp bằng các link ở trên, <strong>hoàn toàn KHÔNG CẦN bật Tunnel trung gian nữa!</strong></p>
+        </div>
+      `;
+    }
+    document.getElementById("mobileTunnelModal").classList.remove("hidden");
+    return;
+  }
+
   const net = STATE.networkInfo || {};
   document.getElementById("txtLanUrl").value = net.lan_url || `${window.location.protocol}//${window.location.hostname}:8050`;
   document.getElementById("txtReadonlyUrl").value =
