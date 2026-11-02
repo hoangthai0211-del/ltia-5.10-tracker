@@ -33,13 +33,37 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(APP_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "ltia_510_tracker.db")
 STATIC_DIR = os.path.join(APP_DIR, "static")
+DRAWINGS_DIR = os.path.join(STATIC_DIR, "drawings")
 UPLOADS_DIR = os.path.join(APP_DIR, "uploads")
 BACKUPS_DIR = os.path.join(APP_DIR, "backups")
+WORKSPACE_ROOT = os.path.dirname(APP_DIR)
+HBS_PDF_DIR = os.path.join(WORKSPACE_ROOT, "HBS Layout", "PDF")
+HBS_SIGN13_PDF = os.path.join(WORKSPACE_ROOT, "HBS Layout", "Sign Drawing Shipment 13", "28.LTIA1-PTB-PMI-HBS3-LA-GF-XX-10020 (Sign Drawing).pdf")
+SSE_PDF_DIR = os.path.join(WORKSPACE_ROOT, "SSE PDF 20.05")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
+os.makedirs(DRAWINGS_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(BACKUPS_DIR, exist_ok=True)
+
+
+def resolve_cad_pdf_path(dwg_id):
+    """Map dwg_id (e.g. HBS_LA_GF_10001, SSE_LA_3F_10001) to original vector PDF path if present locally."""
+    dwg_id = re.sub(r"[^A-Za-z0-9_]", "", str(dwg_id or ""))
+    if dwg_id == "HBS_LA_GF_10020" and os.path.isfile(HBS_SIGN13_PDF):
+        return HBS_SIGN13_PDF
+
+    parts = dwg_id.split("_")
+    if len(parts) == 4:
+        sys_p, type_p, floor_p, num_p = parts
+        target_suffix = f"{sys_p}3-{type_p}-{floor_p}-XX-{num_p}.pdf".upper()
+        search_dir = HBS_PDF_DIR if sys_p.upper() == "HBS" else SSE_PDF_DIR
+        if os.path.isdir(search_dir):
+            for fname in os.listdir(search_dir):
+                if fname.upper().endswith(target_suffix):
+                    return os.path.join(search_dir, fname)
+    return None
 
 # Normalize STEPS_DEF for frontend & Excel
 STEPS_DEF = [
@@ -828,6 +852,27 @@ class TrackerRequestHandler(BaseHTTPRequestHandler):
                         "error": TUNNEL_STATE["error"],
                         "logs": TUNNEL_STATE["logs"][-8:],
                     })
+                return
+
+            if path.startswith("/api/pdf/"):
+                dwg_id = os.path.basename(path[len("/api/pdf/"):])
+                pdf_path = resolve_cad_pdf_path(dwg_id)
+                if pdf_path and os.path.isfile(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        data_bytes = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.send_header("Content-Length", str(len(data_bytes)))
+                    self.send_header("Content-Disposition", f'inline; filename="{os.path.basename(pdf_path)}"')
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(data_bytes)
+                else:
+                    # Fallback on Cloud (Render) where raw PDF folders are not bundled: redirect to high-res JPG
+                    jpg_rel = f"/drawings/{dwg_id}.jpg"
+                    self.send_response(302)
+                    self.send_header("Location", jpg_rel)
+                    self.end_headers()
                 return
 
             if path.startswith("/uploads/"):

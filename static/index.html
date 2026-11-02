@@ -190,7 +190,7 @@
       </div>
 
       <div class="legend-bar">
-        <span><strong>Chú giải thẻ máy:</strong></span>
+        <span><strong>Chú giải trạng thái:</strong></span>
         <span class="status-dot st-NOT_ARRIVED"></span> Chưa về kho
         <span class="status-dot st-ARRIVED"></span> Đã về kho (10%)
         <span class="status-dot st-INSTALLING"></span> Đang lắp đặt
@@ -198,7 +198,60 @@
         <span class="status-dot st-TC_IN_PROGRESS"></span> Đang chạy T&C
         <span class="status-dot st-COMPLETED"></span> Hoàn thành bàn giao (100%)
         <span class="status-dot st-BLOCKED"></span> Vướng mặt bằng / Blocked
-        <span class="ml-auto text-xs text-muted">💡 Bấm vào từng thẻ máy để cập nhật 9 bước, S/N, điều kiện Điện/Mạng và ảnh nghiệm thu</span>
+        <span class="ml-auto text-xs text-muted">💡 <strong>Click vào bất kỳ thẻ máy nào</strong> để định vị & highlight vị trí máy trên Bản vẽ CAD bên dưới (bấm nút <strong>✏️ Cập nhật</strong> để mở hồ sơ 9 bước)</span>
+      </div>
+
+      <!-- INTERACTIVE CAD BLUEPRINT VIEWER & MACHINE LOCATOR -->
+      <div class="card cad-viewer-card" id="cadViewerCard">
+        <div class="cad-viewer-header">
+          <div class="cad-header-left">
+            <span class="cad-icon-badge">📐 MẶT BẰNG TỔNG THỂ TẦNG</span>
+            <select id="cadDrawingSelect" class="form-select form-select-sm cad-select-dropdown" onchange="selectCadDrawing(this.value, null)"></select>
+          </div>
+          <div class="cad-header-controls">
+            <button class="btn btn-xs btn-outline-light" id="btnCadToggleLabels" onclick="toggleCadPinLabels()" title="Hiện hoặc ẩn nhãn mã máy bên cạnh các điểm chấm trên bản vẽ">
+              🏷️ Nhãn Mã máy: BẬT
+            </button>
+            <div class="cad-zoom-group">
+              <button class="btn btn-xs btn-outline-light" onclick="zoomCadBy(-0.25)" title="Thu nhỏ bản vẽ">➖</button>
+              <span class="cad-zoom-label" id="cadZoomPctLabel" onclick="resetCadZoomFit()" title="Bấm để vừa khung nhìn">100%</span>
+              <button class="btn btn-xs btn-outline-light" onclick="zoomCadBy(0.25)" title="Phóng to bản vẽ">➕</button>
+              <button class="btn btn-xs btn-outline-light" onclick="resetCadZoomFit()" title="Thu phóng vừa khít khung nhìn">⛶ Vừa khung</button>
+              <button class="btn btn-xs btn-accent" id="btnCadFocusMachine" onclick="focusHighlightedMachinePin()" title="Phóng to vào vị trí máy đang chọn">🎯 Tâm máy</button>
+            </div>
+            <a id="btnCadOpenPdf" href="/api/pdf/SSE_LA_3F_00001" target="_blank" class="btn btn-xs btn-success" title="Mở file Bản vẽ PDF Vector gốc chất lượng cao trong tab mới">
+              📄 Mở PDF Gốc
+            </a>
+            <button class="btn btn-xs btn-outline-light" onclick="toggleCadViewerCollapse()" id="btnCadCollapse" title="Thu gọn / Mở rộng khung bản vẽ">
+              🔼 Thu gọn
+            </button>
+          </div>
+        </div>
+
+        <!-- DRAWING METADATA & QUICK SIBLING DRAWINGS BAR -->
+        <div class="cad-meta-bar" id="cadMetaBar">
+          <div class="flex-gap-8">
+            <span class="badge badge-sse" id="cadDwgSysBadge">SSE</span>
+            <strong id="cadDwgCodeText" class="text-xs">LTIA1-PTB-PMI-SSE3-LA-3F-XX-00001</strong>
+            <span class="badge badge-info" id="cadDwgScaleBadge">A1 - 1:500</span>
+            <span class="text-xs text-muted" id="cadDwgTitleText">SSE - Mặt bằng tổng thể Tầng 3 (3F)</span>
+          </div>
+          <div class="flex-gap-8">
+            <span class="badge badge-success" id="cadDwgMachineCountBadge">116 máy trên bản vẽ</span>
+            <span class="text-xs text-muted">🖱️ Lăn chuột để Phóng to/Thu nhỏ • Giữ chuột trái kéo để Di chuyển bản vẽ</span>
+          </div>
+        </div>
+
+        <!-- SELECTED MACHINE SPOTLIGHT CALLOUT BANNER -->
+        <div id="cadSelectedMachineBanner" class="cad-selected-banner hidden"></div>
+
+        <!-- PAN & ZOOM VIEWPORT -->
+        <div id="cadViewport" class="cad-viewport">
+          <div id="cadStage" class="cad-stage">
+            <img id="cadImage" class="cad-image" src="/drawings/SSE_LA_3F_00001.jpg" alt="CAD Layout Drawing" draggable="false" onload="onCadImageLoaded()" />
+            <div id="cadPinsLayer" class="cad-pins-layer"></div>
+          </div>
+        </div>
       </div>
 
       <div id="floorMapZonesContainer" class="zones-container"></div>
@@ -557,6 +610,25 @@
 
         <!-- BOQ RECONCILIATION ALERT IF ANY -->
         <div id="mdlBoqAlert" class="boq-alert-box hidden"></div>
+
+        <!-- 0. CAD DRAWING LOCATION PREVIEW & SPOTLIGHT -->
+        <div class="form-section cad-modal-section" id="mdlCadSection">
+          <div class="flex-between">
+            <h4>📐 0. Định vị Máy trên Bản vẽ Kỹ thuật (CAD Layout Position)</h4>
+            <div class="flex-gap-4">
+              <button class="btn btn-xs btn-primary" type="button" onclick="jumpFromModalToCadViewer()">🗺️ Mở trên Bản vẽ Lớn</button>
+              <a id="mdlCadPdfLink" href="/api/pdf/HBS_LA_2F_10001" target="_blank" class="btn btn-xs btn-outline">📄 Xem PDF gốc</a>
+            </div>
+          </div>
+          <div class="mdl-cad-meta text-xs mt-4" id="mdlCadMetaInfo"></div>
+          <div class="mdl-mini-cad-box mt-8" id="mdlMiniCadBox" onclick="jumpFromModalToCadViewer()" title="Bấm để mở rộng và phóng to vị trí máy trên Bản vẽ Kỹ thuật">
+            <div class="mdl-mini-cad-stage" id="mdlMiniCadStage">
+              <img id="mdlMiniCadImg" src="" alt="Mini CAD Preview" />
+              <div id="mdlMiniCadPin" class="cad-pin cad-pin-highlighted"></div>
+            </div>
+            <div class="mdl-mini-cad-hint">🔍 Bấm vào bản vẽ để mở chế độ toàn cảnh & tra cứu các máy lân cận</div>
+          </div>
+        </div>
 
         <!-- 1. SITE READINESS PREREQUISITES -->
         <div class="form-section">
@@ -969,6 +1041,7 @@
   <!-- TOAST NOTIFICATION -->
   <div id="toastContainer" class="toast-container"></div>
 
+  <script src="/drawings_data.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

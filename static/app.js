@@ -23,6 +23,19 @@ const STATE = {
   selectedFloorMap: "ALL",
   selectedMachineCodes: new Set(),
   editingMachineCode: null,
+  cad: {
+    currentDwgId: "HBS_LA_2F_10001",
+    highlightedMachineCode: null,
+    showPinLabels: true,
+    isCollapsed: false,
+    zoom: 1.0,
+    panX: 0,
+    panY: 0,
+    isDragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    pendingFocusOnLoad: false,
+  },
 };
 
 const STATUS_LABELS = {
@@ -83,6 +96,7 @@ window.addEventListener("DOMContentLoaded", () => {
   if (bulkDateEl) bulkDateEl.value = todayStr;
 
   updateUserHeaderUI();
+  initCadViewerEvents();
   refreshAllData();
 });
 
@@ -154,7 +168,9 @@ function renderAllViews() {
   document.getElementById("badgeOpenIssues").textContent = openIssCount;
 
   renderDashboard();
+  populateCadDrawingDropdown();
   renderFloorMap();
+  renderCadViewer();
   renderMachinesTable();
   renderAuxTable();
   renderShipmentsTable();
@@ -534,7 +550,7 @@ function renderModelSummaryTable() {
 }
 
 // ==========================================================================
-// TAB 2: VISUAL FLOOR & ZONE MATRIX
+// TAB 2: VISUAL FLOOR & ZONE MATRIX + INTERACTIVE CAD BLUEPRINT VIEWER
 // ==========================================================================
 function jumpToFloorMap(floorCode) {
   switchTab("floormap");
@@ -546,13 +562,400 @@ function selectFloorMap(floorCode) {
   document.querySelectorAll("#floorMapSelector .floor-pill").forEach((btn) => {
     btn.classList.toggle("active", btn.getAttribute("data-floor") === floorCode);
   });
+
+  // Automatically select the corresponding overall floor plan (00001)
+  const sysFilter = document.getElementById("floorMapSystemFilter")?.value || "ALL";
+  const defaultByFloor = {
+    "3F": sysFilter === "HBS" ? "HBS_LA_3F_00001" : "SSE_LA_3F_00001",
+    "2F": sysFilter === "SSE" ? "SSE_LA_2F_00001" : "HBS_LA_2F_00001",
+    "1F": "SSE_LA_1F_00001",
+    "GF": sysFilter === "SSE" ? "SSE_LA_GF_00001" : "HBS_LA_GF_00001",
+  };
+
+  if (floorCode !== "ALL" && defaultByFloor[floorCode]) {
+    populateCadDrawingDropdown();
+    selectCadDrawing(defaultByFloor[floorCode], null, false);
+  } else {
+    populateCadDrawingDropdown();
+    renderCadViewer();
+  }
   renderFloorMap();
+}
+
+function initCadViewerEvents() {
+  const vp = document.getElementById("cadViewport");
+  if (!vp) return;
+
+  // Mouse wheel zoom centered on cursor
+  vp.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.22 : -0.22;
+      const rect = vp.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      zoomCadAtPoint(STATE.cad.zoom + delta, mouseX, mouseY);
+    },
+    { passive: false }
+  );
+
+  // Mouse drag pan
+  vp.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest(".cad-pin")) return;
+    STATE.cad.isDragging = true;
+    STATE.cad.dragStartX = e.clientX - STATE.cad.panX;
+    STATE.cad.dragStartY = e.clientY - STATE.cad.panY;
+    vp.classList.add("is-dragging");
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!STATE.cad.isDragging) return;
+    STATE.cad.panX = e.clientX - STATE.cad.dragStartX;
+    STATE.cad.panY = e.clientY - STATE.cad.dragStartY;
+    applyCadStageTransform(false);
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (STATE.cad.isDragging) {
+      STATE.cad.isDragging = false;
+      vp.classList.remove("is-dragging");
+    }
+  });
+}
+
+function populateCadDrawingDropdown() {
+  const sel = document.getElementById("cadDrawingSelect");
+  if (!sel || typeof DRAWINGS_CATALOG === "undefined") return;
+
+  const sysFilter = document.getElementById("floorMapSystemFilter")?.value || "ALL";
+  const flFilter = STATE.selectedFloorMap || "ALL";
+
+  const allDwgs = Object.values(DRAWINGS_CATALOG);
+  const filteredDwgs = allDwgs.filter((d) => {
+    if (sysFilter !== "ALL" && d.system !== sysFilter) return false;
+    if (flFilter !== "ALL" && d.floor !== flFilter) return false;
+    return true;
+  });
+  const listToUse = filteredDwgs.length > 0 ? filteredDwgs : allDwgs;
+
+  const groups = {
+    "Hệ thống HBS - Hành lý ký gửi (42200)": [],
+    "Hệ thống SSE - An ninh soi chiếu (42100)": [],
+  };
+
+  listToUse.forEach((d) => {
+    const gKey = d.system === "HBS" ? "Hệ thống HBS - Hành lý ký gửi (42200)" : "Hệ thống SSE - An ninh soi chiếu (42100)";
+    const count = getMachinesForDrawing(d.id, STATE.machines).length;
+    const optHtml = `<option value="${d.id}">🏢 ${d.zone_label} — ${d.code} (${count} máy)</option>`;
+    if (groups[gKey]) groups[gKey].push(optHtml);
+  });
+
+  sel.innerHTML = Object.entries(groups)
+    .filter(([, arr]) => arr.length > 0)
+    .map(([gName, arr]) => `<optgroup label="${gName}">${arr.join("")}</optgroup>`)
+    .join("");
+
+  if (DRAWINGS_CATALOG[STATE.cad.currentDwgId]) {
+    sel.value = STATE.cad.currentDwgId;
+  }
+}
+
+function selectCadDrawing(dwgId, highlightMachineCode = null, autoZoomToPin = false) {
+  if (typeof DRAWINGS_CATALOG === "undefined" || !DRAWINGS_CATALOG[dwgId]) return;
+  const dwgChanged = STATE.cad.currentDwgId !== dwgId;
+  STATE.cad.currentDwgId = dwgId;
+  if (highlightMachineCode !== undefined) {
+    STATE.cad.highlightedMachineCode = highlightMachineCode;
+  }
+
+  const sel = document.getElementById("cadDrawingSelect");
+  if (sel) {
+    if (!Array.from(sel.options).some((o) => o.value === dwgId)) {
+      populateCadDrawingDropdown();
+    }
+    sel.value = dwgId;
+  }
+
+  const imgEl = document.getElementById("cadImage");
+  const dwg = DRAWINGS_CATALOG[dwgId];
+  if (imgEl && dwg) {
+    STATE.cad.pendingFocusOnLoad = !!autoZoomToPin;
+    if (dwgChanged || !imgEl.getAttribute("src") || !imgEl.getAttribute("src").endsWith(dwg.img_url)) {
+      imgEl.src = dwg.img_url;
+    } else {
+      renderCadViewer();
+      if (autoZoomToPin) {
+        setTimeout(() => focusHighlightedMachinePin(), 40);
+      }
+    }
+  }
+}
+
+function onCadImageLoaded() {
+  renderCadViewer();
+  if (STATE.cad.pendingFocusOnLoad && STATE.cad.highlightedMachineCode) {
+    STATE.cad.pendingFocusOnLoad = false;
+    setTimeout(() => focusHighlightedMachinePin(), 50);
+  } else {
+    resetCadZoomFit(false);
+  }
+}
+
+function renderCadViewer() {
+  if (typeof DRAWINGS_CATALOG === "undefined") return;
+  const dwg = DRAWINGS_CATALOG[STATE.cad.currentDwgId];
+  if (!dwg) return;
+
+  // Update metadata bar
+  const sysBadge = document.getElementById("cadDwgSysBadge");
+  if (sysBadge) {
+    sysBadge.textContent = dwg.system;
+    sysBadge.className = `badge ${dwg.system === "HBS" ? "badge-hbs" : "badge-sse"}`;
+  }
+  const codeEl = document.getElementById("cadDwgCodeText");
+  if (codeEl) codeEl.textContent = dwg.code;
+  const scaleEl = document.getElementById("cadDwgScaleBadge");
+  if (scaleEl) scaleEl.textContent = dwg.scale;
+  const titleEl = document.getElementById("cadDwgTitleText");
+  if (titleEl) titleEl.textContent = dwg.title;
+  const pdfBtn = document.getElementById("btnCadOpenPdf");
+  if (pdfBtn) pdfBtn.href = dwg.pdf_url;
+
+  // Render machine pins on this drawing
+  const pinsLayer = document.getElementById("cadPinsLayer");
+  const pinItems = getMachinesForDrawing(dwg.id, STATE.machines);
+  const countBadge = document.getElementById("cadDwgMachineCountBadge");
+  if (countBadge) {
+    countBadge.textContent = `${pinItems.length} máy trên mặt bằng tổng`;
+  }
+
+  if (!pinsLayer) return;
+  const hlCode = STATE.cad.highlightedMachineCode;
+  const showLabels = STATE.cad.showPinLabels;
+
+  pinsLayer.innerHTML = pinItems
+    .map((item) => {
+      const m = item.machine;
+      const isHighlighted = m.machine_code === hlCode;
+      const shortTag = m.machine_code
+        .replace(/^HBS-|^SSE-/, "")
+        .replace(/-3F-|-2F-|-1F-|-GF-/, "-");
+
+      const calloutHtml = isHighlighted
+        ? `
+        <div class="cad-pin-callout" onclick="event.stopPropagation()">
+          <div class="cad-callout-top">
+            <span class="badge ${m.system_type === "HBS" ? "badge-hbs" : "badge-sse"}">${m.system_type}</span>
+            <strong>${m.machine_code}</strong>
+            <span class="status-pill st-${m.current_status}">${m.overall_progress}%</span>
+          </div>
+          <div class="cad-callout-pos">📍 ${item.pos_desc}</div>
+          <div class="cad-callout-meta">Model: <strong>${m.model_key}</strong> • S/N: <strong>${m.serial_number || "Chưa gán"}</strong> (${m.shipment_no})</div>
+          <div class="cad-callout-actions">
+            <button class="btn btn-xs btn-primary" onclick="openMachineModal('${m.machine_code}')">✏️ Cập nhật 9 bước</button>
+          </div>
+        </div>
+      `
+        : "";
+
+      return `
+      <div class="cad-pin st-${m.current_status} ${isHighlighted ? "cad-pin-highlighted" : ""}"
+           style="left:${item.x}%; top:${item.y}%;"
+           data-machine="${m.machine_code}"
+           onclick="onCadPinClick(event, '${m.machine_code}')"
+           ondblclick="openMachineModal('${m.machine_code}')"
+           title="${m.machine_code} (${m.model_key})\nVị trí: ${item.pos_desc}\nTiến độ: ${m.overall_progress}% (${STATUS_LABELS[m.current_status] || m.current_status})\nS/N: ${m.serial_number || "Chưa gán"}">
+        ${isHighlighted ? '<span class="cad-pin-radar"></span><span class="cad-pin-radar cad-pin-radar-delay"></span>' : ""}
+        <span class="cad-pin-dot">${m.overall_progress >= 100 ? "✓" : ""}</span>
+        ${showLabels || isHighlighted ? `<span class="cad-pin-label">${shortTag}</span>` : ""}
+        ${calloutHtml}
+      </div>
+    `;
+    })
+    .join("");
+
+  renderSelectedMachineBanner();
+}
+
+function renderSelectedMachineBanner() {
+  const banner = document.getElementById("cadSelectedMachineBanner");
+  if (!banner) return;
+  const code = STATE.cad.highlightedMachineCode;
+  if (!code) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const m = STATE.machines.find((x) => x.machine_code === code);
+  if (!m) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const cadInfo = resolveMachineCadInfo(m);
+
+  banner.classList.remove("hidden");
+  banner.innerHTML = `
+    <div class="cad-banner-left">
+      <span class="cad-spotlight-badge">🎯 ĐANG ĐỊNH VỊ TRÊN MẶT BẰNG TỔNG</span>
+      <span class="badge ${m.system_type === "HBS" ? "badge-hbs" : "badge-sse"}">${m.system_type}</span>
+      <strong class="cad-banner-code">${m.machine_code}</strong>
+      <span class="status-pill st-${m.current_status}">${STATUS_LABELS[m.current_status] || m.current_status} (${m.overall_progress}%)</span>
+      <span class="cad-banner-pos">📍 <strong>Vị trí trên mặt bằng:</strong> ${cadInfo ? cadInfo.pos_desc : m.area_name}</span>
+      <span class="text-xs text-muted">• Model: <strong>${m.model_key}</strong> • S/N: <strong>${m.serial_number || "Chưa gán"}</strong> • ${m.shipment_no}</span>
+    </div>
+    <div class="cad-banner-actions">
+      <button class="btn btn-xs btn-outline" onclick="focusHighlightedMachinePin()">🎯 Phóng to tâm máy</button>
+      <button class="btn btn-xs btn-primary" onclick="openMachineModal('${m.machine_code}')">✏️ Cập nhật Checklist 9 Bước & Hồ sơ</button>
+      <button class="btn btn-xs btn-outline" onclick="clearHighlightedMachine()" title="Bỏ chọn máy">✕</button>
+    </div>
+  `;
+}
+
+function onCadPinClick(event, machineCode) {
+  event.stopPropagation();
+  STATE.cad.highlightedMachineCode = machineCode;
+  renderCadViewer();
+  focusHighlightedMachinePin();
+  highlightMachineCardInDOM(machineCode);
+}
+
+function highlightMachineOnDrawing(machineCode, switchToTab = true) {
+  const m = STATE.machines.find((x) => x.machine_code === machineCode);
+  if (!m) return;
+
+  if (switchToTab && STATE.activeTab !== "floormap") {
+    switchTab("floormap");
+  }
+
+  // Ensure viewer is expanded
+  if (STATE.cad.isCollapsed) {
+    toggleCadViewerCollapse();
+  }
+
+  const cadInfo = resolveMachineCadInfo(m);
+  STATE.cad.highlightedMachineCode = machineCode;
+
+  if (cadInfo && cadInfo.dwg_id) {
+    selectCadDrawing(cadInfo.dwg_id, machineCode, true);
+  } else {
+    renderCadViewer();
+    focusHighlightedMachinePin();
+  }
+
+  highlightMachineCardInDOM(machineCode);
+
+  const viewerCard = document.getElementById("cadViewerCard");
+  if (viewerCard) {
+    viewerCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+function highlightMachineCardInDOM(machineCode) {
+  document.querySelectorAll(".machine-card").forEach((el) => {
+    el.classList.toggle("machine-card-selected", el.getAttribute("data-machine-code") === machineCode);
+  });
+}
+
+function clearHighlightedMachine() {
+  STATE.cad.highlightedMachineCode = null;
+  renderCadViewer();
+  highlightMachineCardInDOM(null);
+}
+
+function toggleCadOverviewDrawing() {
+  // All drawings are now overall floor plans (00001)
+  resetCadZoomFit(true);
+}
+
+function toggleCadPinLabels() {
+  STATE.cad.showPinLabels = !STATE.cad.showPinLabels;
+  const btn = document.getElementById("btnCadToggleLabels");
+  if (btn) {
+    btn.textContent = `🏷️ Nhãn Mã máy: ${STATE.cad.showPinLabels ? "BẬT" : "TẮT"}`;
+  }
+  renderCadViewer();
+}
+
+function toggleCadViewerCollapse() {
+  STATE.cad.isCollapsed = !STATE.cad.isCollapsed;
+  const vp = document.getElementById("cadViewport");
+  const meta = document.getElementById("cadMetaBar");
+  const btn = document.getElementById("btnCadCollapse");
+  if (vp) vp.classList.toggle("hidden", STATE.cad.isCollapsed);
+  if (meta) meta.classList.toggle("hidden", STATE.cad.isCollapsed);
+  if (btn) btn.textContent = STATE.cad.isCollapsed ? "🔽 Mở rộng Bản vẽ" : "🔼 Thu gọn";
+}
+
+function applyCadStageTransform(animate = true) {
+  const stage = document.getElementById("cadStage");
+  const label = document.getElementById("cadZoomPctLabel");
+  if (!stage) return;
+  stage.style.transition = animate ? "transform 0.28s cubic-bezier(0.22, 1, 0.36, 1)" : "none";
+  stage.style.transform = `translate(${STATE.cad.panX}px, ${STATE.cad.panY}px) scale(${STATE.cad.zoom})`;
+  if (label) {
+    label.textContent = `${Math.round(STATE.cad.zoom * 100)}%`;
+  }
+}
+
+function zoomCadAtPoint(newZoom, originX, originY, animate = false) {
+  const clamped = Math.min(4.0, Math.max(0.4, newZoom));
+  const ratio = clamped / STATE.cad.zoom;
+  STATE.cad.panX = originX - (originX - STATE.cad.panX) * ratio;
+  STATE.cad.panY = originY - (originY - STATE.cad.panY) * ratio;
+  STATE.cad.zoom = clamped;
+  applyCadStageTransform(animate);
+}
+
+function zoomCadBy(delta) {
+  const vp = document.getElementById("cadViewport");
+  if (!vp) return;
+  zoomCadAtPoint(STATE.cad.zoom + delta, vp.clientWidth / 2, vp.clientHeight / 2, true);
+}
+
+function resetCadZoomFit(animate = true) {
+  STATE.cad.zoom = 1.0;
+  STATE.cad.panX = 0;
+  STATE.cad.panY = 0;
+  applyCadStageTransform(animate);
+}
+
+function focusHighlightedMachinePin() {
+  const vp = document.getElementById("cadViewport");
+  const stage = document.getElementById("cadStage");
+  if (!vp || !stage) return;
+
+  const code = STATE.cad.highlightedMachineCode;
+  if (!code) {
+    resetCadZoomFit(true);
+    return;
+  }
+
+  const pinItems = getMachinesForDrawing(STATE.cad.currentDwgId, STATE.machines);
+  const target = pinItems.find((p) => p.machine.machine_code === code);
+  if (!target) {
+    resetCadZoomFit(true);
+    return;
+  }
+
+  const stageW = stage.offsetWidth || vp.clientWidth || 1000;
+  const stageH = stage.offsetHeight || vp.clientHeight || 600;
+  const pinPxX = (target.x / 100) * stageW;
+  const pinPxY = (target.y / 100) * stageH;
+
+  const targetZoom = 1.85;
+  STATE.cad.zoom = targetZoom;
+  STATE.cad.panX = vp.clientWidth / 2 - pinPxX * targetZoom;
+  STATE.cad.panY = vp.clientHeight / 2 - pinPxY * targetZoom + 30;
+  applyCadStageTransform(true);
 }
 
 function renderFloorMap() {
   const sysFilter = document.getElementById("floorMapSystemFilter")?.value || "ALL";
   const stFilter = document.getElementById("floorMapStatusFilter")?.value || "ALL";
   const q = (document.getElementById("floorMapSearch")?.value || "").trim().toLowerCase();
+
+  populateCadDrawingDropdown();
 
   const filtered = STATE.machines.filter((m) => {
     if (STATE.selectedFloorMap !== "ALL" && m.floor !== STATE.selectedFloorMap) return false;
@@ -595,8 +998,26 @@ function renderFloorMap() {
         grp.machines.reduce((s, m) => s + (m.overall_progress || 0), 0) / grp.machines.length
       ).toFixed(1);
 
+      // Direct button to open Overall Floor Plan for this zone group
+      const zoneDwgIds = Array.from(
+        new Set(
+          grp.machines
+            .map((m) => resolveMachineCadInfo(m)?.dwg_id)
+            .filter(Boolean)
+        )
+      );
+      const zoneDwgButtons = zoneDwgIds
+        .map((dId) => {
+          const dObj = DRAWINGS_CATALOG[dId];
+          if (!dObj) return "";
+          return `<button class="btn btn-xs btn-outline zone-dwg-btn" onclick="selectCadDrawing('${dId}', '${grp.machines[0]?.machine_code || ""}', false); document.getElementById('cadViewerCard')?.scrollIntoView({behavior:'smooth'});" title="Xem mặt bằng tổng thể: ${dObj.title}">📐 Mặt bằng Tầng ${grp.floor} (${dObj.system})</button>`;
+        })
+        .join("");
+
       const cardsHtml = grp.machines
         .map((m) => {
+          const cadInfo = resolveMachineCadInfo(m);
+          const isSelected = STATE.cad.highlightedMachineCode === m.machine_code;
           const miniSteps = STATE.stepsDef
             .map((s) => {
               const st = m.steps?.[s.code]?.status || "PENDING";
@@ -605,12 +1026,17 @@ function renderFloorMap() {
             .join("");
 
           return `
-          <div class="machine-card mc-${m.current_status}" onclick="openMachineModal('${m.machine_code}')">
+          <div class="machine-card mc-${m.current_status} ${isSelected ? "machine-card-selected" : ""}"
+               data-machine-code="${m.machine_code}"
+               onclick="highlightMachineOnDrawing('${m.machine_code}', false)">
             <div class="mc-top">
               <span class="mc-code">${m.machine_code}</span>
               <span class="badge ${m.system_type === "HBS" ? "badge-hbs" : "badge-sse"}">${m.system_type}</span>
             </div>
             <div class="mc-model">${m.model_key}</div>
+            <div class="mc-cad-pos" title="Bấm vào thẻ máy để định vị trên bản vẽ CAD: ${cadInfo?.dwg?.code || ""}">
+              📍 ${cadInfo ? cadInfo.pos_desc : m.zone}
+            </div>
             <div class="mc-sn">
               <span>S/N: <strong>${m.serial_number || "Chưa gán"}</strong></span>
               <span>${m.shipment_no}</span>
@@ -625,7 +1051,10 @@ function renderFloorMap() {
                   ? `<span class="pncb-dot ${m.bhs_ready ? "pncb-on" : "pncb-off"}" title="BHS">B</span>` 
                   : `<span class="pncb-dot pncb-na" title="Hệ SSE không kết nối BHS">-</span>`}
               </div>
-              <span class="status-pill st-${m.current_status}">${m.overall_progress}%</span>
+              <div class="flex-gap-4">
+                <span class="status-pill st-${m.current_status}">${m.overall_progress}%</span>
+                <button class="btn btn-xs btn-outline mc-edit-btn" onclick="event.stopPropagation(); openMachineModal('${m.machine_code}')" title="Mở & Cập nhật Checklist 9 bước">✏️</button>
+              </div>
             </div>
           </div>
         `;
@@ -641,6 +1070,7 @@ function renderFloorMap() {
             <span class="text-xs text-muted" style="margin-left:8px;">(${grp.zone} • ${grp.machines.length} máy)</span>
           </div>
           <div class="flex-gap-8">
+            ${zoneDwgButtons}
             <span class="text-xs font-bold">Tiến độ khu vực: ${avgPct}%</span>
           </div>
         </div>
@@ -764,7 +1194,7 @@ function renderMachinesTable() {
         <td><span class="badge badge-info">${m.floor}</span></td>
         <td>
           <div class="font-bold">${m.area_name}</div>
-          <div class="text-xs text-muted">${m.zone}</div>
+          <div class="text-xs text-muted">${resolveMachineCadInfo(m)?.pos_desc || m.zone}</div>
         </td>
         <td>
           <div class="font-bold">${m.serial_number || '<span class="text-muted">Chưa gán S/N</span>'}</div>
@@ -790,7 +1220,10 @@ function renderMachinesTable() {
         </td>
         <td class="text-xs font-bold">${m.assigned_engineer || ""}</td>
         <td class="text-center">
-          <button class="btn btn-xs btn-outline" onclick="openMachineModal('${m.machine_code}')">Chi tiết</button>
+          <div class="flex-gap-4" style="justify-content:center;">
+            <button class="btn btn-xs btn-accent" onclick="highlightMachineOnDrawing('${m.machine_code}', true)" title="Định vị & Highlight máy này trên Bản vẽ Kỹ thuật">📍 Bản vẽ</button>
+            <button class="btn btn-xs btn-outline" onclick="openMachineModal('${m.machine_code}')">Chi tiết</button>
+          </div>
         </td>
       </tr>
     `;
@@ -995,6 +1428,9 @@ function openMachineModal(machineCode) {
     boqBox.classList.add("hidden");
   }
 
+  // 0. Mini-CAD Location Preview
+  renderModalMiniCad(m);
+
   // Site Readiness
   document.getElementById("mdlPowerReady").checked = !!m.power_ready;
   document.getElementById("mdlNetworkReady").checked = !!m.network_ready;
@@ -1045,6 +1481,54 @@ function openMachineModal(machineCode) {
   renderModalAttachments(m);
 
   document.getElementById("machineDetailModal").classList.remove("hidden");
+}
+
+function renderModalMiniCad(m) {
+  const metaEl = document.getElementById("mdlCadMetaInfo");
+  const imgEl = document.getElementById("mdlMiniCadImg");
+  const pinEl = document.getElementById("mdlMiniCadPin");
+  const stageEl = document.getElementById("mdlMiniCadStage");
+  const pdfLink = document.getElementById("mdlCadPdfLink");
+  if (!metaEl || !imgEl || !pinEl || !stageEl) return;
+
+  const info = resolveMachineCadInfo(m);
+  if (!info || !info.dwg) {
+    metaEl.innerHTML = `<span class="text-muted">Chưa gán bản vẽ CAD cho máy này.</span>`;
+    return;
+  }
+
+  if (pdfLink) pdfLink.href = info.dwg.pdf_url;
+
+  metaEl.innerHTML = `
+    <div><strong>📍 Vị trí chi tiết trên bản vẽ:</strong> <span style="color:var(--primary);font-weight:700;">${info.pos_desc}</span></div>
+    <div class="mt-4"><strong>📐 Mã bản vẽ:</strong> <code>${info.dwg.code}</code> (${info.dwg.scale}) — ${info.dwg.zone_label} • Tọa độ: <code>X=${info.x}%, Y=${info.y}%</code></div>
+  `;
+
+  imgEl.src = info.dwg.img_url;
+  pinEl.className = `cad-pin st-${m.current_status} cad-pin-highlighted`;
+  pinEl.style.left = `${info.x}%`;
+  pinEl.style.top = `${info.y}%`;
+  pinEl.innerHTML = `
+    <span class="cad-pin-radar"></span>
+    <span class="cad-pin-radar cad-pin-radar-delay"></span>
+    <span class="cad-pin-dot">✓</span>
+    <span class="cad-pin-label">${m.machine_code}</span>
+  `;
+
+  // Center the mini stage around (info.x%, info.y%) with 1.8x zoom
+  const zoom = 1.75;
+  const shiftX = (50 - info.x) * zoom;
+  const shiftY = (50 - info.y) * zoom;
+  stageEl.style.transformOrigin = "50% 50%";
+  stageEl.style.transform = `translate(${shiftX}%, ${shiftY}%) scale(${zoom})`;
+}
+
+function jumpFromModalToCadViewer() {
+  const code = STATE.editingMachineCode;
+  closeMachineModal();
+  if (code) {
+    highlightMachineOnDrawing(code, true);
+  }
 }
 
 function renderModalStepsChecklist(m) {
