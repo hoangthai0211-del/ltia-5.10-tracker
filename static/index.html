@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>LTIA Gói 5.10 (HBS & SSE) - Theo dõi Tiến độ Lắp đặt & T&C</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- READONLY BANNER -->
+  <div id="readonlyBanner" class="readonly-banner hidden">
+    <span>👁️ <strong>CHẾ ĐỘ XEM BÁO CÁO (READ-ONLY DASHBOARD)</strong> — Dành cho Chủ đầu tư / PMU / Ban Giám đốc theo dõi thời gian thực.</span>
+    <button class="btn btn-xs btn-outline-light" onclick="exitReadOnlyMode()">Chuyển sang Chế độ Kỹ sư Cập nhật</button>
+  </div>
+
+  <!-- TOP HEADER -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand-badge">LTIA 5.10</div>
+      <div>
+        <h1 class="app-title">HỆ THỐNG THEO DÕI LẮP ĐẶT & T&C THIẾT BỊ SOI CHIẾU AN NINH</h1>
+        <div class="app-subtitle">
+          <span>Dự án Cảng HKQT Long Thành (Giai đoạn 1) • Hệ thống HBS (42200) & SSE (42100)</span>
+          <span id="headerSyncStatus" class="sync-pill">● Đang tải dữ liệu...</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn btn-sm btn-accent" onclick="openMobileTunnelModal()" title="Lấy link điện thoại / Bật kết nối 4G từ xa">
+        📱 Kết nối Mobile / 4G
+      </button>
+      <button class="btn btn-sm btn-success" onclick="downloadExcelReport()" title="Xuất báo cáo tiến độ đầy đủ ra file Excel (.xlsx)">
+        📊 Xuất Excel
+      </button>
+      <button class="btn btn-sm btn-secondary" onclick="triggerExcelImport()" id="btnImportExcel" title="Cập nhật hàng loạt từ file Excel">
+        📥 Import Excel
+      </button>
+      <input type="file" id="excelFileInput" accept=".xlsx" class="hidden" onchange="handleExcelImportFile(event)" />
+      <button class="btn btn-sm btn-secondary" onclick="refreshAllData()" title="Làm mới dữ liệu">
+        🔄 Làm mới
+      </button>
+
+      <!-- User Profile / Login Button -->
+      <div class="user-pill" onclick="openLoginModal()" id="userProfileBtn">
+        <span class="user-avatar" id="userAvatar">KS</span>
+        <div class="user-info-text">
+          <div class="user-name" id="userNameDisplay">Kỹ sư Hiện trường</div>
+          <div class="user-role" id="userRoleDisplay">Bấm để đổi tài khoản</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- NAVIGATION TABS -->
+  <nav class="app-tabs" id="mainNavTabs">
+    <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+      📊 Tổng quan & Đối soát
+    </button>
+    <button class="tab-btn" data-tab="floormap" onclick="switchTab('floormap')">
+      🗺️ Sơ đồ Tầng & Khu vực
+    </button>
+    <button class="tab-btn" data-tab="machines" onclick="switchTab('machines')">
+      🛠️ Tiến độ 239 Máy chính <span class="tab-badge" id="badgeMachinesCount">239</span>
+    </button>
+    <button class="tab-btn" data-tab="auxiliary" onclick="switchTab('auxiliary')">
+      🧩 Phụ trợ & Máy trạm <span class="tab-badge" id="badgeAuxCount">23</span>
+    </button>
+    <button class="tab-btn" data-tab="shipments" onclick="switchTab('shipments')">
+      🚢 16 Lô hàng (PL/B/L) <span class="tab-badge" id="badgeShipmentsCount">16</span>
+    </button>
+    <button class="tab-btn" data-tab="issues" onclick="switchTab('issues')">
+      ⚠️ Vướng mắc / RFI <span class="tab-badge badge-danger" id="badgeOpenIssues">0</span>
+    </button>
+    <button class="tab-btn" data-tab="admin" onclick="switchTab('admin')">
+      📜 Nhật ký & Quản trị
+    </button>
+  </nav>
+
+  <!-- MAIN CONTENT CONTAINER -->
+  <main class="app-main">
+    <!-- =================================================================== -->
+    <!-- TAB 1: DASHBOARD & RECONCILIATION SUMMARY                           -->
+    <!-- =================================================================== -->
+    <section id="tab-dashboard" class="tab-pane active">
+      <!-- KPI CARDS -->
+      <div class="kpi-grid" id="dashboardKpiGrid"></div>
+
+      <!-- TWO-COLUMN PROGRESS BREAKDOWN: BY SYSTEM & BY FLOOR -->
+      <div class="dashboard-row">
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ Tiến độ theo Hệ thống (HBS 42200 vs SSE 42100) & Trọng số 9 Bước</h3>
+            <span class="badge badge-info">Chuẩn hóa: Lắp đặt 55% + T&C 45%</span>
+          </div>
+          <div class="card-body" id="systemProgressPanel"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>🏢 Tiến độ theo Tầng Nhà ga (GF • 1F • 2F • 3F)</h3>
+            <span class="text-muted text-xs">Bấm vào từng tầng để mở Sơ đồ vị trí máy</span>
+          </div>
+          <div class="card-body" id="floorProgressPanel"></div>
+        </div>
+      </div>
+
+      <!-- 9 STEPS PIPELINE FUNNEL -->
+      <div class="card mt-16">
+        <div class="card-header">
+          <h3>🔄 Phễu Tiến độ 9 Bước Chuẩn hóa Toàn Dự án (239 Máy chính)</h3>
+          <span class="text-muted text-xs">Bấm vào bất kỳ bước nào để lọc danh sách máy tại bước đó</span>
+        </div>
+        <div class="card-body">
+          <div class="step-funnel-grid" id="stepFunnelGrid"></div>
+        </div>
+      </div>
+
+      <!-- MODEL SUMMARY & RECONCILIATION TABLE -->
+      <div class="card mt-16">
+        <div class="card-header">
+          <div>
+            <h3>📋 Bảng Tổng hợp Tiến độ & Đối soát Số lượng theo Chủng loại Máy (BOQ vs Bản vẽ vs Packing List)</h3>
+            <p class="text-muted text-xs mt-4">
+              Baseline lắp đặt theo Bản vẽ phê duyệt (0380A, 0369A, 0466) & Thực tế hàng về (14 Lô PL). Các dòng có thay đổi thiết kế / điều chuyển giữa HBS & SSE được đánh dấu rõ.
+            </p>
+          </div>
+          <div class="filter-group-inline">
+            <button class="btn btn-xs btn-outline" onclick="filterModelTable('ALL')">Tất cả</button>
+            <button class="btn btn-xs btn-outline" onclick="filterModelTable('HBS')">Chỉ HBS (42200)</button>
+            <button class="btn btn-xs btn-outline" onclick="filterModelTable('SSE')">Chỉ SSE (42100)</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table" id="modelSummaryTable">
+            <thead>
+              <tr>
+                <th>Hệ thống</th>
+                <th>Mã Model</th>
+                <th>Tên Thiết bị</th>
+                <th class="text-center">SL BOQ</th>
+                <th class="text-center">SL Bản vẽ (Baseline)</th>
+                <th>Đối soát BOQ vs BV</th>
+                <th class="text-center">Đã về kho (B1)</th>
+                <th class="text-center">Đang lắp (B2-B4)</th>
+                <th class="text-center">Xong Lắp đặt (B5)</th>
+                <th class="text-center">Đang T&C (B6-B8)</th>
+                <th class="text-center">Bàn giao (B9)</th>
+                <th style="min-width:140px;">% Tiến độ TB</th>
+                <th class="text-center">Chi tiết</th>
+              </tr>
+            </thead>
+            <tbody id="modelSummaryTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 2: VISUAL FLOOR & ZONE MATRIX                                   -->
+    <!-- =================================================================== -->
+    <section id="tab-floormap" class="tab-pane">
+      <div class="toolbar-card">
+        <div class="floor-selector-tabs" id="floorMapSelector">
+          <button class="floor-pill active" data-floor="ALL" onclick="selectFloorMap('ALL')">🏢 Tất cả các tầng (239)</button>
+          <button class="floor-pill" data-floor="3F" onclick="selectFloorMap('3F')">🛫 Tầng 3 - 3F Check-in & Departure</button>
+          <button class="floor-pill" data-floor="2F" onclick="selectFloorMap('2F')">🔍 Tầng 2 - 2F Primary HBS (RTT110) & Server</button>
+          <button class="floor-pill" data-floor="1F" onclick="selectFloorMap('1F')">🛬 Tầng 1 - 1F Arrival Customs & Transfer</button>
+          <button class="floor-pill" data-floor="GF" onclick="selectFloorMap('GF')">🚛 Tầng Trệt - GF Make-up, Oversize, VIP & Staff</button>
+        </div>
+
+        <div class="floormap-subfilters">
+          <select id="floorMapSystemFilter" class="form-select form-select-sm" onchange="renderFloorMap()">
+            <option value="ALL">Mọi hệ thống (HBS + SSE)</option>
+            <option value="HBS">HBS - Hành lý ký gửi (42200)</option>
+            <option value="SSE">SSE - An ninh soi chiếu (42100)</option>
+          </select>
+          <select id="floorMapStatusFilter" class="form-select form-select-sm" onchange="renderFloorMap()">
+            <option value="ALL">Mọi trạng thái</option>
+            <option value="NOT_ARRIVED">⚪ Chưa về kho</option>
+            <option value="ARRIVED">🔵 Đã về kho / Chờ lắp</option>
+            <option value="INSTALLING">🟡 Đang lắp đặt</option>
+            <option value="INSTALLED">🟣 Xong lắp đặt / Chờ T&C</option>
+            <option value="TC_IN_PROGRESS">🟠 Đang T&C</option>
+            <option value="COMPLETED">🟢 Hoàn thành & Bàn giao</option>
+            <option value="BLOCKED">🔴 Đang vướng mắc (Blocked)</option>
+          </select>
+          <input type="text" id="floorMapSearch" class="form-input form-input-sm" placeholder="Tìm nhanh Tag ID, S/N, Khu vực..." oninput="renderFloorMap()" />
+        </div>
+      </div>
+
+      <div class="legend-bar">
+        <span><strong>Chú giải thẻ máy:</strong></span>
+        <span class="status-dot st-NOT_ARRIVED"></span> Chưa về kho
+        <span class="status-dot st-ARRIVED"></span> Đã về kho (10%)
+        <span class="status-dot st-INSTALLING"></span> Đang lắp đặt
+        <span class="status-dot st-INSTALLED"></span> Đã nghiệm thu lắp đặt (55%)
+        <span class="status-dot st-TC_IN_PROGRESS"></span> Đang chạy T&C
+        <span class="status-dot st-COMPLETED"></span> Hoàn thành bàn giao (100%)
+        <span class="status-dot st-BLOCKED"></span> Vướng mặt bằng / Blocked
+        <span class="ml-auto text-xs text-muted">💡 Bấm vào từng thẻ máy để cập nhật 9 bước, S/N, điều kiện Điện/Mạng và ảnh nghiệm thu</span>
+      </div>
+
+      <div id="floorMapZonesContainer" class="zones-container"></div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 3: 239 INDIVIDUAL MACHINES & 9-STEP MATRIX                      -->
+    <!-- =================================================================== -->
+    <section id="tab-machines" class="tab-pane">
+      <!-- FILTER BAR -->
+      <div class="toolbar-card">
+        <div class="filters-grid">
+          <div class="filter-item">
+            <label>Tìm kiếm (Tag, S/N, Cont, Khu vực)</label>
+            <input type="text" id="fltSearch" class="form-input form-input-sm" placeholder="VD: RTT110, 1250741, Zone 4..." oninput="renderMachinesTable()" />
+          </div>
+          <div class="filter-item">
+            <label>Hệ thống</label>
+            <select id="fltSystem" class="form-select form-select-sm" onchange="renderMachinesTable()">
+              <option value="ALL">Tất cả (HBS + SSE)</option>
+              <option value="HBS">HBS (42200)</option>
+              <option value="SSE">SSE (42100)</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label>Tầng (Floor)</label>
+            <select id="fltFloor" class="form-select form-select-sm" onchange="renderMachinesTable()">
+              <option value="ALL">Tất cả các tầng</option>
+              <option value="3F">3F (Tầng 3)</option>
+              <option value="2F">2F (Tầng 2)</option>
+              <option value="1F">1F (Tầng 1)</option>
+              <option value="GF">GF (Tầng trệt)</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label>Chủng loại máy (Model)</label>
+            <select id="fltModel" class="form-select form-select-sm" onchange="renderMachinesTable()">
+              <option value="ALL">Tất cả Model</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label>Lô hàng (Shipment)</label>
+            <select id="fltShipment" class="form-select form-select-sm" onchange="renderMachinesTable()">
+              <option value="ALL">Tất cả Lô hàng</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label>Trạng thái Tiến độ</label>
+            <select id="fltStatus" class="form-select form-select-sm" onchange="renderMachinesTable()">
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="NOT_ARRIVED">Chưa về kho (0%)</option>
+              <option value="ARRIVED">Đã về kho / Chờ lắp (10%)</option>
+              <option value="INSTALLING">Đang lắp đặt (15% - 50%)</option>
+              <option value="INSTALLED">Xong lắp đặt / Chờ T&C (55%)</option>
+              <option value="TC_IN_PROGRESS">Đang T&C (60% - 95%)</option>
+              <option value="COMPLETED">Hoàn thành & Bàn giao (100%)</option>
+              <option value="BLOCKED">Đang bị vướng (BLOCKED)</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label>Kỹ sư phụ trách</label>
+            <select id="fltEngineer" class="form-select form-select-sm" onchange="renderMachinesTable()">
+              <option value="ALL">Tất cả kỹ sư</option>
+              <option value="thai">Thái (Quản trị viên)</option>
+              <option value="hanviet">Kỹ sư Nhà thầu Hàn Việt</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label>Đối soát BOQ / Mặt bằng</label>
+            <select id="fltSpecial" class="form-select form-select-sm" onchange="renderMachinesTable()">
+              <option value="ALL">Tất cả</option>
+              <option value="BOQ_DIFF">⚠️ Có thay đổi BOQ / Điều chuyển</option>
+              <option value="MISSING_POWER">🔌 Chưa có Nguồn điện</option>
+              <option value="MISSING_NET">🌐 Chưa có Cổng mạng Data</option>
+              <option value="READY_TO_INSTALL">✅ Đủ mặt bằng & Điện/Mạng</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="filter-footer">
+          <div class="filter-stats" id="machinesFilterSummary">Đang hiển thị 239 / 239 máy</div>
+          <div class="filter-actions">
+            <button class="btn btn-xs btn-outline" onclick="resetMachineFilters()">Xóa bộ lọc</button>
+            <button class="btn btn-xs btn-primary" id="btnAddMachine" onclick="openCreateMachineModal()">+ Thêm máy phát sinh</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- BULK UPDATE ACTION BAR (Shown when checkboxes selected) -->
+      <div id="bulkActionBar" class="bulk-action-bar hidden">
+        <div class="bulk-left">
+          <strong>Đã chọn <span id="bulkSelectedCount">0</span> máy</strong>
+          <button class="btn btn-xs btn-outline-light" onclick="clearMachineSelection()">Bỏ chọn</button>
+        </div>
+        <div class="bulk-controls">
+          <select id="bulkStepSelect" class="form-select form-select-xs">
+            <option value="STEP_1_INCOMING">B1: Hàng về kho/site (10%)</option>
+            <option value="STEP_2_POSITIONING">B2: Đưa vào vị trí (10%)</option>
+            <option value="STEP_3_MECHANICAL">B3: Lắp cơ khí (15%)</option>
+            <option value="STEP_4_POWER_DATA">B4: Đấu điện & Mạng (10%)</option>
+            <option value="STEP_5_INST_INSPECT">B5: Nghiệm thu lắp đặt (10%)</option>
+            <option value="STEP_6_POWER_ON">B6: Cấp nguồn & Cấu hình (10%)</option>
+            <option value="STEP_7_SAT">B7: Chạy thử độc lập SAT (15%)</option>
+            <option value="STEP_8_ISAT">B8: Tích hợp hệ thống ISAT (10%)</option>
+            <option value="STEP_9_HANDOVER">B9: Kiểm định & Bàn giao (10%)</option>
+          </select>
+          <select id="bulkStatusSelect" class="form-select form-select-xs">
+            <option value="COMPLETED">✅ Đánh dấu HOÀN THÀNH</option>
+            <option value="IN_PROGRESS">🔄 Đánh dấu ĐANG THỰC HIỆN</option>
+            <option value="PENDING">⚪ Đặt lại CHƯA LÀM</option>
+            <option value="BLOCKED">🔴 Đánh dấu VƯỚNG MẮC (Blocked)</option>
+          </select>
+          <input type="date" id="bulkDateInput" class="form-input form-input-xs" />
+          <button class="btn btn-xs btn-success" onclick="applyBulkStepUpdate()">Áp dụng Bước</button>
+          <span class="divider-v">|</span>
+          <button class="btn btn-xs btn-accent" onclick="applyBulkReadiness(1)">✅ Đủ Điện/Mạng/Sàn</button>
+        </div>
+      </div>
+
+      <!-- 9-STEP MATRIX TABLE -->
+      <div class="card">
+        <div class="table-responsive matrix-scroll">
+          <table class="data-table matrix-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="chkSelectAllMachines" onchange="toggleSelectAllMachines(this.checked)" /></th>
+                <th style="min-width:135px;">Mã Máy (Tag ID)</th>
+                <th>Hệ</th>
+                <th style="min-width:130px;">Model</th>
+                <th>Tầng</th>
+                <th style="min-width:185px;">Khu vực / Vị trí</th>
+                <th style="min-width:125px;">Serial (S/N) & Lô</th>
+                <th class="text-center" title="Điều kiện mặt bằng: Điện (P) / Mạng (N) / Sàn (C) / BHS (B)">Mặt bằng<br/><small>P·N·C·B</small></th>
+                <th class="text-center step-col-hdr phase-inst" title="Bước 1: Hàng về kho/site (10%)">B1<br/><small>Về kho</small></th>
+                <th class="text-center step-col-hdr phase-inst" title="Bước 2: Đưa vào vị trí (10%)">B2<br/><small>Vị trí</small></th>
+                <th class="text-center step-col-hdr phase-inst" title="Bước 3: Lắp đặt cơ khí (15%)">B3<br/><small>Cơ khí</small></th>
+                <th class="text-center step-col-hdr phase-inst" title="Bước 4: Đấu nối Điện & Mạng (10%)">B4<br/><small>Điện/Mạng</small></th>
+                <th class="text-center step-col-hdr phase-inst" title="Bước 5: Nghiệm thu lắp đặt tĩnh (10%)">B5<br/><small>NT Lắp</small></th>
+                <th class="text-center step-col-hdr phase-tc" title="Bước 6: Cấp nguồn & Cấu hình (10%)">B6<br/><small>PowerOn</small></th>
+                <th class="text-center step-col-hdr phase-tc" title="Bước 7: Chạy thử độc lập SAT (15%)">B7<br/><small>SAT</small></th>
+                <th class="text-center step-col-hdr phase-tc" title="Bước 8: Tích hợp BHS/CMS ISAT (10%)">B8<br/><small>ISAT</small></th>
+                <th class="text-center step-col-hdr phase-tc" title="Bước 9: Kiểm định, Đào tạo & Bàn giao (10%)">B9<br/><small>Bàn giao</small></th>
+                <th style="min-width:110px;">Tiến độ</th>
+                <th>Kỹ sư</th>
+                <th class="text-center">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="machinesMatrixTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 4: AUXILIARY EQUIPMENT & WORKSTATIONS (23 BATCHES)              -->
+    <!-- =================================================================== -->
+    <section id="tab-auxiliary" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3>🧩 Theo dõi Tiến độ Thiết bị Phụ trợ, Máy trạm (Workstation), UPS, Tay dò HHMD, Băng tải & Bàn Nội thất</h3>
+            <p class="text-muted text-xs mt-4">
+              Quản lý theo từng Nhóm / Khu vực (23 nhóm). Chỉnh sửa trực tiếp số lượng Đã về / Đã lắp đặt / Đã T&C và bấm <strong>Lưu</strong> trên từng dòng.
+            </p>
+          </div>
+          <div class="filter-group-inline">
+            <select id="auxSystemFilter" class="form-select form-select-sm" onchange="renderAuxTable()">
+              <option value="ALL">Tất cả (HBS + SSE)</option>
+              <option value="HBS">HBS (42200)</option>
+              <option value="SSE">SSE (42100)</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Mã Nhóm</th>
+                <th>Hệ</th>
+                <th style="min-width:220px;">Tên Thiết bị Phụ trợ / Máy trạm / Nội thất</th>
+                <th>Tầng / Khu vực</th>
+                <th class="text-center">ĐVT</th>
+                <th class="text-center">SL BOQ</th>
+                <th class="text-center">SL Bản vẽ</th>
+                <th class="text-center" style="width:95px;">SL Đã về</th>
+                <th class="text-center" style="width:95px;">SL Đã lắp</th>
+                <th class="text-center" style="width:95px;">SL Đã T&C</th>
+                <th style="min-width:120px;">% Hoàn thành</th>
+                <th>Lô hàng & Dải Serial / Quy cách</th>
+                <th style="min-width:180px;">Ghi chú đối soát & Hiện trường</th>
+                <th class="text-center">Lưu</th>
+              </tr>
+            </thead>
+            <tbody id="auxBatchesTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 5: 14 SHIPMENTS RECONCILIATION                                  -->
+    <!-- =================================================================== -->
+    <section id="tab-shipments" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3>🚢 Danh mục 16 Lô hàng Nhập khẩu Thiết bị Gói 5.10 (Lô 01 – Lô 16)</h3>
+            <p class="text-muted text-xs mt-4">
+              Đối chiếu chuẩn xác 100% giữa Packing List (PL), Bill of Lading (B/L) và Tờ khai Hải quan. Bấm <strong>Xem máy thuộc lô</strong> để lọc danh sách máy.
+            </p>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Mã Lô</th>
+                <th>Phân nhóm</th>
+                <th>Phương thức</th>
+                <th>Số B/L / HAWB</th>
+                <th>Ngày B/L</th>
+                <th>Số Tờ khai HQ</th>
+                <th>Ngày TK / Thông quan</th>
+                <th>Cửa khẩu nhập</th>
+                <th class="text-center">Số kiện (PL)</th>
+                <th class="text-right">Gross Weight (kg)</th>
+                <th style="min-width:280px;">Tóm tắt Thiết bị chính trong Lô</th>
+                <th class="text-center">Danh sách máy</th>
+              </tr>
+            </thead>
+            <tbody id="shipmentsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 6: ISSUES, PUNCHLIST & RFI                                      -->
+    <!-- =================================================================== -->
+    <section id="tab-issues" class="tab-pane">
+      <div class="toolbar-card">
+        <div class="flex-between">
+          <div>
+            <h3>⚠️ Quản lý Vướng mắc Hiện trường, Punchlist, RFI & Sai lệch Hồ sơ (BOQ / Bản vẽ / Mặt bằng)</h3>
+            <p class="text-muted text-xs mt-4">
+              Bao gồm 12 điểm lưu ý đối soát hồ sơ + vướng mắc thiếu ổ cắm nguồn/mạng hiện trường (RFA-SDS-0305C) và các vấn đề phát sinh khi thi công.
+            </p>
+          </div>
+          <div class="filter-group-inline">
+            <select id="issueStatusFilter" class="form-select form-select-sm" onchange="renderIssuesList()">
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="OPEN">🔴 Đang mở (OPEN)</option>
+              <option value="RESOLVED">🟢 Đã xử lý (RESOLVED)</option>
+            </select>
+            <button class="btn btn-sm btn-primary" onclick="openIssueModal()">+ Thêm Vướng mắc / RFI mới</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="issuesContainer" class="issues-list"></div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- TAB 7: AUDIT LOG, USERS & BACKUP                                    -->
+    <!-- =================================================================== -->
+    <section id="tab-admin" class="tab-pane">
+      <div class="dashboard-row">
+        <!-- USER ACCOUNTS MANAGEMENT -->
+        <div class="card">
+          <div class="card-header">
+            <h3>👥 Danh sách Tài khoản Kỹ sư & Phân quyền</h3>
+            <button class="btn btn-xs btn-primary" onclick="openUserModal()">+ Thêm / Sửa Tài khoản</button>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Họ và tên</th>
+                  <th>Vai trò</th>
+                  <th>Phạm vi phụ trách</th>
+                  <th>Chuyển nhanh</th>
+                </tr>
+              </thead>
+              <tbody id="usersTbody"></tbody>
+            </table>
+          </div>
+          <div class="card-body border-top">
+            <h4>💾 Sao lưu & Khôi phục Dữ liệu</h4>
+            <p class="text-xs text-muted mt-4">
+              Toàn bộ cơ sở dữ liệu SQLite được lưu tự động tại <code>d:\Technical\5.10\LTIA_Tracker_App\data\ltia_510_tracker.db</code>.
+            </p>
+            <div class="mt-8 flex-gap-8">
+              <button class="btn btn-sm btn-success" onclick="downloadExcelReport()">📊 Xuất Báo cáo Excel (.xlsx)</button>
+              <button class="btn btn-sm btn-secondary" onclick="window.open('/api/backup/json', '_blank')">💾 Tải bản sao lưu JSON đầy đủ</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- AUDIT LOG -->
+        <div class="card">
+          <div class="card-header">
+            <h3>📜 Nhật ký Cập nhật Hệ thống (Audit Log)</h3>
+            <span class="text-xs text-muted">200 thao tác gần nhất</span>
+          </div>
+          <div class="audit-log-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Thời gian</th>
+                  <th>Người cập nhật</th>
+                  <th>Đối tượng</th>
+                  <th>Chi tiết thay đổi</th>
+                </tr>
+              </thead>
+              <tbody id="auditLogTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- SLIDE-OVER MODAL: MACHINE DETAIL & 9-STEP CHECKLIST                   -->
+  <!-- ===================================================================== -->
+  <div id="machineDetailModal" class="modal-backdrop hidden" onclick="closeModalOnBackdrop(event, 'machineDetailModal')">
+    <div class="slide-over-panel" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <span class="badge" id="mdlSysBadge">HBS</span>
+          <strong id="mdlMachineCode" class="modal-code-title">HBS-RTT110-01</strong>
+          <span id="mdlStatusBadge" class="status-pill">ARRIVED</span>
+        </div>
+        <button class="btn-close" onclick="closeMachineModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="mdl-subtitle" id="mdlModelName">Máy soi CT hành lý ký gửi tốc độ cao (EDS) - Rapiscan RTT110</div>
+
+        <!-- PROGRESS SUMMARY BARS -->
+        <div class="mdl-progress-box">
+          <div class="mdl-prog-item">
+            <div class="flex-between text-xs"><span>Giai đoạn Lắp đặt (Max 55%)</span><strong id="mdlInstPct">10%</strong></div>
+            <div class="progress-track"><div id="mdlInstBar" class="progress-fill fill-blue" style="width:18%"></div></div>
+          </div>
+          <div class="mdl-prog-item">
+            <div class="flex-between text-xs"><span>Giai đoạn T&C (Max 45%)</span><strong id="mdlTcPct">0%</strong></div>
+            <div class="progress-track"><div id="mdlTcBar" class="progress-fill fill-purple" style="width:0%"></div></div>
+          </div>
+          <div class="mdl-prog-item">
+            <div class="flex-between text-xs"><span>TỔNG TIẾN ĐỘ MÁY (100%)</span><strong id="mdlOverallPct" class="text-md">10%</strong></div>
+            <div class="progress-track progress-track-lg"><div id="mdlOverallBar" class="progress-fill fill-green" style="width:10%"></div></div>
+          </div>
+        </div>
+
+        <!-- BOQ RECONCILIATION ALERT IF ANY -->
+        <div id="mdlBoqAlert" class="boq-alert-box hidden"></div>
+
+        <!-- 1. SITE READINESS PREREQUISITES -->
+        <div class="form-section">
+          <h4>1. Điều kiện Mặt bằng & Hạ tầng Sẵn sàng (Site Readiness)</h4>
+          <div class="readiness-toggles">
+            <label class="readiness-check">
+              <input type="checkbox" id="mdlPowerReady" />
+              <span>🔌 Nguồn điện cấp máy (Power Socket)</span>
+            </label>
+            <label class="readiness-check">
+              <input type="checkbox" id="mdlNetworkReady" />
+              <span>🌐 Cổng mạng / Cáp quang (Data Outlet)</span>
+            </label>
+            <label class="readiness-check">
+              <input type="checkbox" id="mdlCivilReady" />
+              <span>🏗️ Mặt bằng sàn & Cửa đưa máy vào</span>
+            </label>
+            <label class="readiness-check">
+              <input type="checkbox" id="mdlBhsReady" />
+              <span>🔄 Giao diện Băng tải BHS / Bàn con lăn</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 2. 9-STEP CHECKLIST -->
+        <div class="form-section">
+          <div class="flex-between">
+            <h4>2. Checklist 9 Bước Lắp đặt (55%) & T&C (45%)</h4>
+            <div class="flex-gap-4">
+              <button class="btn btn-xs btn-outline" onclick="quickSetAllModalSteps('INST_DONE')">✅ Xong Lắp đặt (B1-B5)</button>
+              <button class="btn btn-xs btn-success" onclick="quickSetAllModalSteps('ALL_DONE')">🏆 Xong 100% (B1-B9)</button>
+            </div>
+          </div>
+          <div id="mdlStepsChecklist" class="steps-checklist-list"></div>
+        </div>
+
+        <!-- 3. METADATA & SERIAL NUMBER -->
+        <div class="form-section">
+          <h4>3. Thông tin Định danh, Vị trí, Serial Number & Phân công</h4>
+          <div class="form-grid-2">
+            <div>
+              <label>Serial Number (S/N thực tế)</label>
+              <input type="text" id="mdlSerialNumber" class="form-input" placeholder="Nhập S/N máy..." />
+            </div>
+            <div>
+              <label>Lô hàng nhập khẩu (Shipment)</label>
+              <input type="text" id="mdlShipmentNo" class="form-input" placeholder="VD: Lô 01" />
+            </div>
+            <div>
+              <label>Số Container</label>
+              <input type="text" id="mdlContainerNo" class="form-input" />
+            </div>
+            <div>
+              <label>Số Kiện / Crate / Plomb</label>
+              <input type="text" id="mdlCrateNo" class="form-input" />
+            </div>
+            <div>
+              <label>Tầng (Floor)</label>
+              <select id="mdlFloor" class="form-select">
+                <option value="3F">3F - Tầng 3</option>
+                <option value="2F">2F - Tầng 2</option>
+                <option value="1F">1F - Tầng 1</option>
+                <option value="GF">GF - Tầng trệt</option>
+              </select>
+            </div>
+            <div>
+              <label>Zone / Cánh</label>
+              <input type="text" id="mdlZone" class="form-input" />
+            </div>
+            <div class="col-span-2">
+              <label>Khu vực lắp đặt chi tiết (Area Name)</label>
+              <input type="text" id="mdlAreaName" class="form-input" />
+            </div>
+            <div>
+              <label>Node mạng / IP / Tủ Rack</label>
+              <input type="text" id="mdlNetworkNode" class="form-input" placeholder="VD: Rack 2F / Node SSE-01..." />
+            </div>
+            <div>
+              <label>Tủ nguồn / Ổ cắm công nghiệp</label>
+              <input type="text" id="mdlPowerSocket" class="form-input" placeholder="VD: 3P 63A / 1P 16A..." />
+            </div>
+            <div>
+              <label>Kỹ sư phụ trách chính</label>
+              <select id="mdlAssignedEngineer" class="form-select">
+                <option value="thai">Thái (Quản trị viên)</option>
+                <option value="hanviet">Kỹ sư Nhà thầu Hàn Việt</option>
+              </select>
+            </div>
+            <div>
+              <label>Ngày dự kiến Hoàn thành</label>
+              <input type="date" id="mdlPlannedFinish" class="form-input" />
+            </div>
+            <div class="col-span-2">
+              <label>Ghi chú hiện trường (Remark)</label>
+              <textarea id="mdlRemark" class="form-textarea" rows="2" placeholder="Ghi chú tiến độ, vướng mắc, vị trí đặt máy..."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. ATTACHMENTS (PHOTOS & ACCEPTANCE PDFS) -->
+        <div class="form-section">
+          <h4>4. Hồ sơ Nghiệm thu & Hình ảnh Hiện trường (Photos / ITP / SAT / ISAT PDF)</h4>
+          <div id="mdlAttachmentsList" class="attachments-list"></div>
+          <div class="upload-box mt-8">
+            <select id="mdlUploadDocType" class="form-select form-select-sm" style="max-width:190px;">
+              <option value="SITE_PHOTO">📸 Ảnh lắp đặt hiện trường</option>
+              <option value="NAMEPLATE_SN">🏷️ Ảnh tem Serial Number</option>
+              <option value="ITP_INSTALL">📄 Biên bản Nghiệm thu Lắp đặt</option>
+              <option value="SAT_REPORT">📑 Biên bản SAT (Chạy thử độc lập)</option>
+              <option value="ISAT_REPORT">🔗 Biên bản ISAT (Tích hợp hệ thống)</option>
+              <option value="RADIATION_CERT">☢️ Giấy phép / Kiểm định An toàn bức xạ</option>
+            </select>
+            <input type="text" id="mdlUploadCaption" class="form-input form-input-sm" placeholder="Mô tả file / ảnh..." />
+            <label class="btn btn-sm btn-secondary cursor-pointer">
+              📎 Chọn Ảnh / PDF để tải lên
+              <input type="file" id="mdlFileInput" accept="image/*,.pdf,.xlsx,.docx" class="hidden" onchange="uploadMachineAttachment(event)" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-danger btn-sm" id="btnDeleteMachineModal" onclick="deleteCurrentMachine()">🗑️ Xóa máy</button>
+        <div class="flex-gap-8">
+          <button class="btn btn-secondary" onclick="closeMachineModal()">Đóng</button>
+          <button class="btn btn-primary" id="btnSaveMachineModal" onclick="saveMachineModal()">💾 Lưu toàn bộ cập nhật</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: MOBILE QR & PUBLIC 4G TUNNEL                                   -->
+  <!-- ===================================================================== -->
+  <div id="mobileTunnelModal" class="modal-backdrop hidden" onclick="closeModalOnBackdrop(event, 'mobileTunnelModal')">
+    <div class="modal-dialog" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>📱 Kết nối Điện thoại Hiện trường (WiFi LAN & Internet 4G/5G)</h3>
+        <button class="btn-close" onclick="closeModal('mobileTunnelModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="tunnel-section">
+          <h4>1. Kết nối qua mạng WiFi nội bộ (LAN tại Văn phòng Ban điều hành)</h4>
+          <p class="text-xs text-muted">💡 <strong>Khuyên dùng:</strong> Thiết bị bắt cùng WiFi với máy tính nên truy cập trực tiếp qua link mạng LAN để có tốc độ phản hồi tức thì, không phụ thuộc Internet và không bao giờ bị đổi link:</p>
+          <div class="url-copy-box mt-8">
+            <input type="text" id="txtLanUrl" class="form-input" readonly />
+            <button class="btn btn-sm btn-secondary" onclick="copyInputValue('txtLanUrl')">Copy Link</button>
+          </div>
+          <div class="url-copy-box mt-8">
+            <input type="text" id="txtReadonlyUrl" class="form-input" readonly />
+            <button class="btn btn-sm btn-secondary" onclick="copyInputValue('txtReadonlyUrl')">Copy Link Chỉ Xem (TV/PMU)</button>
+          </div>
+        </div>
+
+        <div class="tunnel-section mt-16">
+          <div class="flex-between">
+            <h4>2. Kết nối từ xa qua 4G/5G ngoài Công trường Nhà ga (Public HTTPS Tunnel)</h4>
+            <span id="tunnelStateBadge" class="badge badge-warning">Chưa bật</span>
+          </div>
+          <p class="text-xs text-muted mt-4">
+            Dành cho Kỹ sư ngoài công trường chỉ có sóng 4G/5G. Đường truyền công khai miễn phí được tạo qua <code>localhost.run</code>.
+          </p>
+          <div class="alert alert-warning text-xs mt-8" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:8px 12px;border-radius:6px;">
+            ⚠️ <strong>Tại sao xuất hiện lỗi "no tunnel"?</strong> Link 4G là đường truyền tạm thời. Khi máy chủ khởi động lại hoặc ngắt kết nối SSH, đường hầm cũ sẽ đóng và báo lỗi <code>no tunnel</code>. Mỗi lần bật lại, hệ thống sẽ cấp một link mới ngẫu nhiên. Vui lòng copy <strong>Link 4G mới nhất</strong> bên dưới!
+          </div>
+          <div class="mt-12 flex-gap-8">
+            <button class="btn btn-sm btn-primary" id="btnStartTunnel" onclick="startPublicTunnel()">🚀 Bật Đường truyền 4G (Public Tunnel)</button>
+            <button class="btn btn-sm btn-danger hidden" id="btnStopTunnel" onclick="stopPublicTunnel()">⏹️ Tắt Đường truyền</button>
+          </div>
+          <div id="tunnelActiveBox" class="mt-12 hidden">
+            <label class="text-xs font-bold text-success">✅ Link truy cập 4G/Internet toàn cầu (HTTPS):</label>
+            <div class="url-copy-box mt-4">
+              <input type="text" id="txtPublicTunnelUrl" class="form-input" readonly />
+              <button class="btn btn-sm btn-success" onclick="copyInputValue('txtPublicTunnelUrl')">Copy Link 4G</button>
+            </div>
+            <div class="url-copy-box mt-4">
+              <input type="text" id="txtPublicReadonlyUrl" class="form-input" readonly />
+              <button class="btn btn-sm btn-secondary" onclick="copyInputValue('txtPublicReadonlyUrl')">Copy Link 4G (Chỉ xem cho CĐT/PMU)</button>
+            </div>
+          </div>
+          <div id="tunnelErrorBox" class="text-xs text-danger mt-8 hidden"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('mobileTunnelModal')">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: LOGIN / SWITCH ENGINEER                                        -->
+  <!-- ===================================================================== -->
+  <div id="loginModal" class="modal-backdrop hidden" onclick="closeModalOnBackdrop(event, 'loginModal')">
+    <div class="modal-dialog modal-sm" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>🔐 Đăng nhập / Chuyển Tài khoản Kỹ sư</h3>
+        <button class="btn-close" onclick="closeModal('loginModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-xs text-muted">Chọn nhanh tài khoản kỹ sư phụ trách hoặc đăng nhập bằng mật khẩu để ghi nhận chính xác vào Nhật ký (Audit Log):</p>
+        <div class="quick-users-grid mt-12" id="quickUsersGrid"></div>
+
+        <hr class="divider" />
+        <div class="form-group">
+          <label>Tên đăng nhập (Username)</label>
+          <input type="text" id="loginUsername" class="form-input" value="thai" />
+        </div>
+        <div class="form-group mt-8">
+          <label>Mật khẩu</label>
+          <input type="password" id="loginPassword" class="form-input" value="admin510" />
+        </div>
+        <div id="loginErrorMsg" class="text-xs text-danger mt-8 hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="enterReadOnlyMode()">👁️ Chế độ Chỉ Xem (PMU)</button>
+        <button class="btn btn-primary" onclick="submitLogin()">Đăng nhập</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: CREATE / EDIT ISSUE                                            -->
+  <!-- ===================================================================== -->
+  <div id="issueModal" class="modal-backdrop hidden" onclick="closeModalOnBackdrop(event, 'issueModal')">
+    <div class="modal-dialog" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="issueModalTitle">⚠️ Cập nhật Vướng mắc / RFI / Punchlist</h3>
+        <button class="btn-close" onclick="closeModal('issueModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid-2">
+          <div>
+            <label>Mã Issue (Để trống sẽ tự tạo)</label>
+            <input type="text" id="issCode" class="form-input" placeholder="VD: ISS-14" />
+          </div>
+          <div>
+            <label>Mã Máy liên quan (Nếu có)</label>
+            <input type="text" id="issMachineCode" class="form-input" placeholder="VD: SSE-920CT-01" />
+          </div>
+          <div>
+            <label>Hệ thống</label>
+            <select id="issSystem" class="form-select">
+              <option value="ALL">Cả HBS & SSE</option>
+              <option value="HBS">HBS (42200)</option>
+              <option value="SSE">SSE (42100)</option>
+            </select>
+          </div>
+          <div>
+            <label>Tầng / Giai đoạn</label>
+            <input type="text" id="issFloor" class="form-input" placeholder="VD: 1F / GF / GĐ5" />
+          </div>
+          <div>
+            <label>Phân loại vướng mắc</label>
+            <select id="issCategory" class="form-select">
+              <option value="SITE_READINESS">🔌 Mặt bằng / Nguồn điện / Cổng mạng</option>
+              <option value="DESIGN_BOQ">📐 Thiết kế / Bản vẽ / BOQ / VO</option>
+              <option value="SHIPMENT_PL">🚢 Hàng hóa / Packing List / Chưa về</option>
+              <option value="TECHNICAL_TC">🛠️ Kỹ thuật lắp đặt & T&C</option>
+            </select>
+          </div>
+          <div>
+            <label>Mức độ ưu tiên & Trạng thái</label>
+            <div class="flex-gap-8">
+              <select id="issSeverity" class="form-select">
+                <option value="HIGH">🔴 Cao (HIGH)</option>
+                <option value="MEDIUM">🟡 Trung bình</option>
+                <option value="LOW">🟢 Thấp</option>
+              </select>
+              <select id="issStatus" class="form-select">
+                <option value="OPEN">Đang mở (OPEN)</option>
+                <option value="RESOLVED">Đã xử lý (RESOLVED)</option>
+              </select>
+            </div>
+          </div>
+          <div class="col-span-2">
+            <label>Tiêu đề tóm tắt</label>
+            <input type="text" id="issTitle" class="form-input" placeholder="Tóm tắt ngắn gọn vướng mắc..." />
+          </div>
+          <div class="col-span-2">
+            <label>Mô tả chi tiết vướng mắc / Hiện trạng</label>
+            <textarea id="issDesc" class="form-textarea" rows="3"></textarea>
+          </div>
+          <div class="col-span-2">
+            <label>Tài liệu / Bản vẽ tham chiếu</label>
+            <input type="text" id="issSource" class="form-input" placeholder="VD: RFA-SDS-0305C / Bản vẽ 0380A Tr.24..." />
+          </div>
+          <div class="col-span-2">
+            <label>Hành động xử lý / Đề xuất giải pháp</label>
+            <textarea id="issAction" class="form-textarea" rows="2"></textarea>
+          </div>
+          <div class="col-span-2">
+            <label>Đơn vị / Người chịu trách nhiệm phối hợp</label>
+            <input type="text" id="issResponsible" class="form-input" value="Ban Kỹ thuật / Hàn Việt / Tổng thầu ICTAS" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('issueModal')">Hủy</button>
+        <button class="btn btn-primary" onclick="saveIssueModal()">💾 Lưu Vướng mắc</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: CREATE NEW MACHINE                                             -->
+  <!-- ===================================================================== -->
+  <div id="createMachineModal" class="modal-backdrop hidden" onclick="closeModalOnBackdrop(event, 'createMachineModal')">
+    <div class="modal-dialog" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>➕ Thêm Máy Mới Phát Sinh</h3>
+        <button class="btn-close" onclick="closeModal('createMachineModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid-2">
+          <div>
+            <label>Mã Máy (Tag ID) *</label>
+            <input type="text" id="newMcCode" class="form-input" placeholder="VD: SSE-920DX-11" />
+          </div>
+          <div>
+            <label>Hệ thống</label>
+            <select id="newMcSys" class="form-select">
+              <option value="SSE">SSE (42100)</option>
+              <option value="HBS">HBS (42200)</option>
+            </select>
+          </div>
+          <div>
+            <label>Mã Model</label>
+            <input type="text" id="newMcModelKey" class="form-input" placeholder="VD: RAP-920DX" />
+          </div>
+          <div>
+            <label>Tên Thiết bị</label>
+            <input type="text" id="newMcModelName" class="form-input" placeholder="VD: Máy soi X-Ray 920DX" />
+          </div>
+          <div>
+            <label>Tầng</label>
+            <select id="newMcFloor" class="form-select">
+              <option value="3F">3F</option>
+              <option value="2F">2F</option>
+              <option value="1F">1F</option>
+              <option value="GF">GF</option>
+            </select>
+          </div>
+          <div>
+            <label>Zone / Cánh</label>
+            <input type="text" id="newMcZone" class="form-input" placeholder="VD: West (Int'l)" />
+          </div>
+          <div class="col-span-2">
+            <label>Khu vực lắp đặt</label>
+            <input type="text" id="newMcAreaName" class="form-input" placeholder="VD: 3F Staff Security Check Point" />
+          </div>
+          <div>
+            <label>Serial Number (S/N)</label>
+            <input type="text" id="newMcSn" class="form-input" />
+          </div>
+          <div>
+            <label>Lô hàng</label>
+            <input type="text" id="newMcShipment" class="form-input" value="Bổ sung" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('createMachineModal')">Hủy</button>
+        <button class="btn btn-primary" onclick="submitCreateMachine()">Tạo máy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: ADD / EDIT USER                                                -->
+  <!-- ===================================================================== -->
+  <div id="userModal" class="modal-backdrop hidden" onclick="closeModalOnBackdrop(event, 'userModal')">
+    <div class="modal-dialog modal-sm" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>👤 Thêm / Cập nhật Tài khoản Kỹ sư</h3>
+        <button class="btn-close" onclick="closeModal('userModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Username (viết liền không dấu)</label>
+          <input type="text" id="usrUsername" class="form-input" placeholder="VD: hung" />
+        </div>
+        <div class="form-group mt-8">
+          <label>Họ và tên hiển thị</label>
+          <input type="text" id="usrFullName" class="form-input" placeholder="VD: KS. Hùng (T&C)" />
+        </div>
+        <div class="form-group mt-8">
+          <label>Mật khẩu</label>
+          <input type="text" id="usrPassword" class="form-input" placeholder="Mặc định: ltia2026" />
+        </div>
+        <div class="form-group mt-8">
+          <label>Vai trò</label>
+          <select id="usrRole" class="form-select">
+            <option value="engineer">Kỹ sư Hiện trường (engineer)</option>
+            <option value="admin">Quản trị viên / Trưởng ban (admin)</option>
+            <option value="viewer">Chỉ xem báo cáo (viewer)</option>
+          </select>
+        </div>
+        <div class="form-group mt-8">
+          <label>Phạm vi phụ trách</label>
+          <input type="text" id="usrScope" class="form-input" value="ALL" placeholder="VD: GF, 1F, HBS, ALL" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('userModal')">Hủy</button>
+        <button class="btn btn-primary" onclick="saveUserAccount()">Lưu tài khoản</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
